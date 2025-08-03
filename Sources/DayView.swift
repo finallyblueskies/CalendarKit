@@ -10,6 +10,7 @@ public protocol DayViewDelegate: AnyObject {
     func dayView(dayView: DayView, willMoveTo date: Date)
     func dayView(dayView: DayView, didMoveTo  date: Date)
     func dayView(dayView: DayView, didUpdate event: EventDescriptor)
+    func dayView(dayView: DayView, didUpdate event: EventDescriptor, tentativeStartDate: Date, tentativeEndDate: Date)
 }
 
 public class DayView: UIView, TimelinePagerViewDelegate {
@@ -196,5 +197,10 @@ public class DayView: UIView, TimelinePagerViewDelegate {
     }
     public func timelinePager(timelinePager: TimelinePagerView, didUpdate event: EventDescriptor) {
         delegate?.dayView(dayView: self, didUpdate: event)
+    }
+    
+    // Uncommitted editing interactions
+    public func timelinePager(timelinePager: TimelinePagerView, didUpdate event: EventDescriptor, tentativeStartDate: Date, tentativeEndDate: Date) {
+        delegate?.dayView(dayView: self, didUpdate: event, tentativeStartDate: tentativeStartDate, tentativeEndDate: tentativeEndDate)
     }
 }

@@ -12,6 +12,9 @@ public protocol TimelinePagerViewDelegate: AnyObject {
 
     // Editing
     func timelinePager(timelinePager: TimelinePagerView, didUpdate event: EventDescriptor)
+    
+    // Uncommitted editing interactions
+    func timelinePager(timelinePager: TimelinePagerView, didUpdate event: EventDescriptor, tentativeStartDate: Date, tentativeEndDate: Date)
 }
 
 public final class TimelinePagerView: UIView, UIGestureRecognizerDelegate, UIScrollViewDelegate, DayViewStateUpdating, UIPageViewControllerDataSource, UIPageViewControllerDelegate, TimelineViewDelegate {
@@ -284,10 +287,15 @@ public final class TimelinePagerView: UIView, UIGestureRecognizerDelegate, UIScr
             editedEvent = event
             let editableCopy = event.makeEditable()
             create(event: editableCopy, animated: animated)
+            // Reset tentative dates when beginning editing
+            lastTentativeStartDate = nil
+            lastTentativeEndDate = nil
         }
     }
 
     private var prevOffset: CGPoint = .zero
+    private var lastTentativeStartDate: Date?
+    private var lastTentativeEndDate: Date?
     @objc func handlePanGesture(_ sender: UIPanGestureRecognizer) {
 
         if let pendingEvent = editedEventView {
@@ -301,6 +309,11 @@ public final class TimelinePagerView: UIView, UIGestureRecognizerDelegate, UIScr
             pendingEvent.frame.origin.y += diff.y
             prevOffset = newCoord
             accentDateForEditedEventView()
+            
+            // Notify delegate during drag operation
+            if sender.state == .changed {
+                notifyDelegateOfTentativeUpdate()
+            }
         }
 
         if sender.state == .ended {
@@ -337,6 +350,11 @@ public final class TimelinePagerView: UIView, UIGestureRecognizerDelegate, UIScr
                 pendingEvent.frame = suggestedEventFrame
                 prevOffset = newCoord
                 accentDateForEditedEventView(eventHeight: tag == 0 ? 0 : suggestedEventHeight)
+                
+                // Notify delegate during resize operation
+                if sender.state == .changed {
+                    notifyDelegateOfTentativeUpdate()
+                }
             }
         }
 
@@ -352,6 +370,46 @@ public final class TimelinePagerView: UIView, UIGestureRecognizerDelegate, UIScr
             let date = timeline.yToDate(converted.y + eventHeight)
             timeline.accentedDate = date
             timeline.setNeedsDisplay()
+        }
+    }
+    
+    private func notifyDelegateOfTentativeUpdate() {
+        guard let pendingEvent = editedEventView,
+              let descriptor = pendingEvent.descriptor,
+              let currentTimeline = currentTimeline else { return }
+        
+        let timeline = currentTimeline.timeline
+        let eventFrame = pendingEvent.frame
+        let converted = convert(eventFrame, to: timeline)
+        let rawStartDate = timeline.yToDate(converted.minY)
+        let rawEndDate = timeline.yToDate(converted.maxY)
+        
+        // Apply snapping behavior to get final tentative dates
+        let snappedStartDate: Date
+        let snappedEndDate: Date
+        
+        if let resizeHandleTag = resizeHandleTag {
+            if resizeHandleTag == 0 {
+                // Top handle is being dragged, snap the start date and keep original end
+                snappedStartDate = timeline.eventEditingSnappingBehavior.nearestDate(to: rawStartDate)
+                snappedEndDate = descriptor.dateInterval.end
+            } else {
+                // Bottom handle is being dragged, snap both start and end dates
+                snappedStartDate = timeline.eventEditingSnappingBehavior.nearestDate(to: rawStartDate)
+                snappedEndDate = timeline.eventEditingSnappingBehavior.nearestDate(to: rawEndDate)
+            }
+        } else {
+            // Dragging the whole event, snap start and preserve duration
+            snappedStartDate = timeline.eventEditingSnappingBehavior.nearestDate(to: rawStartDate)
+            let originalDuration = descriptor.dateInterval.duration
+            snappedEndDate = snappedStartDate.addingTimeInterval(originalDuration)
+        }
+        
+        // Only notify if snapped dates have changed
+        if snappedStartDate != lastTentativeStartDate || snappedEndDate != lastTentativeEndDate {
+            lastTentativeStartDate = snappedStartDate
+            lastTentativeEndDate = snappedEndDate
+            delegate?.timelinePager(timelinePager: self, didUpdate: descriptor, tentativeStartDate: snappedStartDate, tentativeEndDate: snappedEndDate)
         }
     }
 
@@ -406,12 +464,16 @@ public final class TimelinePagerView: UIView, UIGestureRecognizerDelegate, UIScr
 
             resizeHandleTag = nil
             prevOffset = .zero
+            lastTentativeStartDate = nil
+            lastTentativeEndDate = nil
         }
     }
 
     /// Ends editing mode
     public func endEventEditing() {
         prevOffset = .zero
+        lastTentativeStartDate = nil
+        lastTentativeEndDate = nil
         editedEventView?.eventResizeHandles.forEach{$0.panGestureRecognizer.removeTarget(self, action: nil)}
         editedEventView?.removeFromSuperview()
         editedEventView = nil
